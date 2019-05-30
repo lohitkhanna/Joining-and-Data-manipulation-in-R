@@ -1,0 +1,194 @@
+####### Mapping Invoice, Invoice item. Transaction data#################
+####### Author:Lohit khannna 9
+###### Step1 : J1 = Joining transaction data with GL_Accout master using PK: by.x = "Account", by.y = "Account_Code", to get revenue center ( CMI, Event etc)
+##### Step2 : J2 = Joining invoice and invoice item  data using inner loop  , PK = Invoice_number
+#### Step3 : J3 = Joining J1 and J2 using Transaction_Number
+### Using vlookup attaching Derived ID with Table with customer_ID, then removing ship to and bill to customer_ID 
+## Step4" Appending all tables - final_revenue_unique
+
+
+brary(RMySQL)
+db_user <- '******'
+db_password <- '******'
+db_name <- '******************'
+db_host <- '************************' # for local access
+
+
+mydb = dbConnect(MySQL(),user = db_user, password = db_password,
+                 dbname = db_name, host = db_host) 
+dbListTables(mydb) 
+R1 <- dbSendQuery(mydb, "select * from acgi_GL_accounts_master")
+
+# 3. Read data from db
+df1 <-  fetch(R1, n = -1)
+colnames(df1)
+
+
+
+R2 <- dbSendQuery(mydb, "select * from stg_acgi_ar_gl_distributions_Final")
+
+# Joined ( by Accounts)
+df2 <-  fetch(R2, n = -1)
+colnames(df2)
+df3<-merge(x = df2[,c("Transaction_Number","Transaction_Line_Number","Transaction_Date","Total_Amounts","Set_of_Books","Business_Unit","Account","Chart_of_Account_Description","Deferred_Flag")]
+      , y = df1[,c("Business_Unit","Segments","Sub_Segments", "Account_Code", "Type")], by.x = "Account", by.y = "Account_Code", all=TRUE)
+df3_new<-df3[,c("Account","Transaction_Number","Transaction_Date","Set_of_Books","Business_Unit.x","Chart_of_Account_Description","Segments","Sub_Segments","Type")]
+R4 <- dbSendQuery(mydb, "select * from stg_acgi_ar_invoice_items")
+
+# data from db
+df4 <-  fetch(R4, n = -1)
+colnames
+
+R5 <- dbSendQuery(mydb, "select * from stg_acgi_ar_invoices")
+
+# data from db
+df5 <-  fetch(R5, n = -1)
+colnames
+df4<-df4[,c("Invoice_Number","Transaction_Date","Transaction_Number","Parent_Transaction_Number","Line_Type",
+       "Description","Product_Area","Order_Number","Transaction_Type","Product_ID",
+       "Deferred_Income_Complete_Flag","Deferred_Income_End_Date",
+       "Deferred_Income_Method","Deferred_Income_Start_Date","Display_Flag",
+       "Exchange_Rate","Unit_Price","Create_Date","Local_Unit_Price" ,"Total_Quantity",
+       "Total_Amounts","Total_Local_Amounts","Total_Revenues","Total_Charges",
+       "Total_Adjustments","Total_Shippings","Total_Payments","Total_Sales_Taxes",
+       "Total_Balances","Load_Date"  )]
+df5<-df5[,c("Invoice_Number","Product_Area","Order_Number","Most_Recent_Payment_Date","Invoice_Date","Due_Date",
+        "Create_Date","Posted_Date","Bill_To_Customer_ID","Ship_To_Customer_ID")]
+
+# Invoice data itemwise
+df6<-merge(df5,df4,by="Invoice_Number",all.y = TRUE)
+
+# keeping unique value of df3_new
+
+df3_new<-subset(df3_new,!duplicated(df3_new$Transaction_Number))
+
+# Now will merge transaction data df3, then check how many Customer ID exist
+df_final<-merge(df6,df3_new,by="Transaction_Number",all.x =TRUE)
+
+write.csv(df_final,"C:/Users/u278748/Desktop/ACGI_REVENUE/df_finance_final_atinvoice_item.csv")
+
+
+##############################################################################################################################
+# mappimg with base data
+base_cust_ID<- read_excel("C:/Users/*****/Desktop/****/Base-membership data_Customer_ID.xlsx")
+base_emp_drived_ID<- read_excel("C:/Users/********/Desktop/********/Base-membership data_Employer_derived_ID.xlsx")
+
+df_final$Bill_To_Customer_ID<-as.numeric(df_final$Bill_To_Customer_ID)
+df_final$Ship_To_Customer_ID<-as.numeric(df_final$Ship_To_Customer_ID)
+base_cust_ID$Customer_ID<-as.numeric(base_cust_ID$Customer_ID)
+map1<-base_cust_ID%>% filter(Customer_ID %in% df_final$Bill_To_Customer_ID)%>%inner_join(df_final, by = c("Customer_ID" = "Bill_To_Customer_ID"))
+map2<-base_cust_ID%>% filter(!Customer_ID %in% df_final$Bill_To_Customer_ID)%>%inner_join(df_final, by = c("Customer_ID" = "Ship_To_Customer_ID"))
+sapply(df_final, function(x) length(unique(x)))
+sapply(map1, function(x) length(unique(x)))
+sapply(map2, function(x) length(unique(x)))
+# 
+#PENDING MAPPING WITH DERIVED EMPLOYER ID
+df_final$Bill_To_Customer_ID<-as.numeric(df_final$Bill_To_Customer_ID)
+df_final$Ship_To_Customer_ID<-as.numeric(df_final$Ship_To_Customer_ID)
+base_emp_drived_ID$Derived_Employer_Customer_ID<-as.numeric(base_emp_drived_ID$Derived_Employer_Customer_ID)
+map3<-base_emp_drived_ID%>% filter(Derived_Employer_Customer_ID %in% df_final$Bill_To_Customer_ID)%>%inner_join(df_final, by = c("Derived_Employer_Customer_ID" = "Bill_To_Customer_ID"))
+map4<-base_emp_drived_ID%>% filter(!Derived_Employer_Customer_ID %in% df_final$Bill_To_Customer_ID)%>%inner_join(df_final, by = c("Derived_Employer_Customer_ID" = "Ship_To_Customer_ID"))
+sapply(df_final, function(x) length(unique(x)))
+sapply(map3, function(x) length(unique(x)))
+sapply(map4, function(x) length(unique(x)))
+
+#######################################
+map1%>%select(Customer_ID)%>%count()
+#31597
+map2%>%select(Customer_ID)%>%count()
+#6789
+
+write.csv(map1,"C:/Users/u278748/Desktop/ACGI_REVENUE/map1.csv",row.names = FALSE)
+write.csv(map2,"C:/Users/u278748/Desktop/ACGI_REVENUE/map2.csv",row.names = FALSE)
+write.csv(map3,"C:/Users/u278748/Desktop/ACGI_REVENUE/map3.csv",row.names = FALSE)
+write.csv(map4,"C:/Users/u278748/Desktop/ACGI_REVENUE/map4.csv",row.names = FALSE)
+
+# Manually puting derived empoyer ID against CUstomer_ID  using Vlookup and then removing bill to and ship to customer_id.
+# After this appending all 4 data 
+############# MANUAL MAPPING############
+map1_up<-read_excel("C:/Users/u278748/Desktop/ACGI_REVENUE/Mapped_file/map1.xlsx")
+map2_up<-read_excel("C:/Users/u278748/Desktop/ACGI_REVENUE/Mapped_file/map2.xlsx")
+map3_up<-read_excel("C:/Users/u278748/Desktop/ACGI_REVENUE/Mapped_file/map3.xlsx")
+map4_up<-read_excel("C:/Users/u278748/Desktop/ACGI_REVENUE/Mapped_file/map4.xlsx")
+final_revenue<-rbind(map1_up,map2_up,map3_up,map4_up)
+final_revenue_unique<-final_revenue %>% distinct()
+write.csv(final_revenue_unique,"C:/Users/u278748/Desktop/ACGI_REVENUE/Mapped_file/final_revenue.csv",row.names = FALSE)
+
+########################Reference EDA########################
+map3%>%select(Derived_Employer_Customer_ID)%>%count()
+#196253
+map4%>%select(Derived_Employer_Customer_ID)%>%count()
+#17
+n_distinct(map3$Derived_Employer_Customer_ID)
+#10054
+n_distinct(map4$Derived_Employer_Customer_ID)
+#2
+n_distinct(map3$Ship_To_Customer_ID)
+#11477
+n_distinct(map4$Bill_To_Customer_ID)
+#2
+
+########################################
+n_distinct(df_final$Bill_To_Customer_ID)
+#19963
+n_distinct(df_final$Ship_To_Customer_ID)
+#21522
+n_distinct(base_cust_ID$Customer_ID)
+#52929 (Original base data)
+n_distinct(base_emp_drived_ID$Derived_Employer_Customer_ID)
+#12002 (Original base data)
+head(final_revenue_unique)
+
+
+
+######## FOR Vinay's request for segmentation###########
+
+final_revenue<-read.csv("C:/Users/u278748/Desktop/ACGI_REVENUE/Mapped_file/final_revenue.csv")
+colnames(final_revenue)
+
+
+Segmentation_revenue<-final_revenue[,c("Customer_ID","Derived_Employer_Customer_ID", "Invoice_Date","Exchange_Rate",
+"Unit_Price","Local_Unit_Price","Total_Quantity","Total_Amounts","Total_Local_Amounts",
+"Total_Revenues","Total_Charges","Total_Adjustments","Total_Shippings",
+"Total_Payments","Total_Sales_Taxes","Total_Balances")]
+Segmentation_revenue$Invoice_Date<-as.character(Segmentation_revenue$Invoice_Date)
+Segmentation_revenue<-replace(Segmentation_revenue,is.na(Segmentation_revenue),0)
+Segmentation_revenue$Invoice_Date<-as.Date(Segmentation_revenue$Invoice_Date)
+glimpse(Segmentation_revenue)
+
+############################
+# year change when december
+Segmentation_revenue_new<-Segmentation_revenue%>%mutate(new_date=ifelse(month(Segmentation_revenue$Invoice_Date)==12, year(Segmentation_revenue$Invoice_Date)+1, year(Segmentation_revenue$Invoice_Date)))
+Segmentation_revenue_summarize<-Segmentation_revenue_new%>%
+  group_by(Derived_Employer_Customer_ID,Customer_ID,new_date) %>%
+  summarise(sum_Total_Amounts = sum(Total_Amounts,na.rm = TRUE
+                                    ),sum_Total_Quantity = sum(Total_Quantity,na.rm = TRUE),sum_Total_Local_Amounts=sum(Total_Local_Amounts,na.rm = TRUE),
+            sum_Total_Revenues= sum(Total_Revenues,na.rm = TRUE),sum_Total_Charges=sum(Total_Charges,na.rm = TRUE),sum_Total_Adjustments=sum(Total_Adjustments,na.rm = TRUE),sum_Total_Shippings=sum(Total_Shippings,na.rm = TRUE),
+            sum_Total_Payments=sum(Total_Payments,na.rm = TRUE),sum_Total_Sales_Taxes=sum(Total_Sales_Taxes,na.rm = TRUE),sum_Total_Balances=sum(Total_Balances,na.rm = TRUE))             
+
+write.csv(Segmentation_revenue_summarize,"C:/Users/*****/Desktop/Segmentation_revenue_summarize_date_updated.csv",row.names=FALSE)
+
+
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
